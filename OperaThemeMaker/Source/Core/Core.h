@@ -1,12 +1,15 @@
 #pragma once
 
 #include <filesystem>
-#include <SimpleInterface.h>
 
 #include "HawtLib/File/File.h"
 #include "zip_file.hpp"
+#include "ffmpegcpp.h"
+#include "ffmpeg.h"
 
 #include "VideoEffects.h"
+
+using namespace ffmpegcpp;
 
 namespace OperaThemeMaker
 {
@@ -80,7 +83,7 @@ namespace OperaThemeMaker
 			iniFile.Save("output/persona.ini");
 		}
 
-		inline std::filesystem::path ProcessVideo(const std::filesystem::path& inVideo)
+		/*inline std::filesystem::path ProcessVideo(const std::filesystem::path& inVideo)
 		{
 			auto outVideo = inVideo;
 			outVideo.replace_extension(".webm");
@@ -90,7 +93,7 @@ namespace OperaThemeMaker
 			ffmpegCppGenerate(handle);
 			ffmpegCppClose(handle);
 			return outputFile;
-		}
+		}*/
 
 		inline std::filesystem::path ProcessVideo(const std::filesystem::path& inVideo,
 		                                          const VideoEffects& videoEffects)
@@ -98,10 +101,7 @@ namespace OperaThemeMaker
 			auto outVideo = inVideo;
 			outVideo.replace_extension(".webm");
 			std::filesystem::path outputFile = std::filesystem::current_path().append("output").append(outVideo.filename().string());
-			void* handle = ffmpegCppCreate(outputFile.string().c_str());
-			ffmpegCppAddVideoStream(handle, inVideo.string().c_str());
 			std::string filterString;
-
 			std::vector<VideoEffect*> finalVideoEffect;
 
 			for (auto* videoEffect : videoEffects)
@@ -132,9 +132,39 @@ namespace OperaThemeMaker
 				}
 			}
 
-			ffmpegCppAddVideoFilter(handle, filterString.c_str());
-			ffmpegCppGenerate(handle);
-			ffmpegCppClose(handle);
+			// Get input Video Duration
+			AVFormatContext* pFormatCtx = avformat_alloc_context();
+			avformat_open_input(&pFormatCtx, inVideo.string().c_str(), NULL, NULL);
+			std::string bitRate = std::to_string(360000 / (pFormatCtx->duration / AV_TIME_BASE)) + "K";
+			avformat_close_input(&pFormatCtx);
+			avformat_free_context(pFormatCtx);
+
+			Muxer* muxer = new Muxer(outputFile.string().c_str());
+			VideoCodec* codec = new VideoCodec(AV_CODEC_ID_VP9);
+			codec->SetQualityScale(0);
+			codec->SetGenericOption("b", bitRate.c_str());
+			VideoEncoder* encoder = new VideoEncoder(codec, muxer);
+
+
+			Filter* filter = nullptr;
+			if (!filterString.empty())
+				filter = new Filter(filterString.c_str(), encoder);
+
+			Demuxer* demuxer = new Demuxer(inVideo.string().c_str());
+
+			if (!filterString.empty())
+				demuxer->DecodeBestVideoStream(filter);
+			else
+				demuxer->DecodeBestVideoStream(encoder);
+
+			demuxer->PreparePipeline();
+
+			while (!demuxer->IsDone())
+			{
+				demuxer->Step();
+			}
+
+			muxer->Close();
 			return outputFile;
 		}
 

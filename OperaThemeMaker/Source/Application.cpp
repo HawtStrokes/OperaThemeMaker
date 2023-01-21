@@ -1,5 +1,7 @@
 #define NOMINMAX
 
+#include <thread>
+
 #include "Gui/GuiApp.h"
 #include "imgui.h"
 
@@ -13,6 +15,9 @@ namespace OperaThemeMaker
 {
 	static ImVec2 g_WindowDimensions = { 800, 700 };
 	static const std::filesystem::path outputPath = std::filesystem::current_path().append("output");
+	static bool processingTheme = false;
+
+	void CreateTheme();
 
 	namespace GUIComponents
 	{
@@ -50,8 +55,8 @@ namespace OperaThemeMaker
 
 		} g_FourIntCache;
 
-		static ImVec4 fgColor = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
-		static ImVec4 bgColor = ImVec4(1.0f, 1.0f, 1.0f, 0.0f);
+		static ImVec4 fgColor = ImVec4(1.0f, 1.0f, 1.0f, 0.0f);
+		static ImVec4 bgColor = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
 		static ImGui::FileBrowser fileDialog;
 		static ImGui::FileBrowser fileDialogTheme(ImGuiFileBrowserFlags_SelectDirectory);
 		static bool toPicture = true;
@@ -75,13 +80,13 @@ namespace OperaThemeMaker
 		static bool chkMonochrome = false;
 
 		static int boxBlurIntensity = 1;
-		static int vignettePiDivisor = 1;
+		static int vignettePiDivisor = 4;
 
 		static int videoEffectListSelectedItem;
 
 		static bool chkToThemes = true;
 		static char operaThemePath[512];
-
+		static VideoEffects videoEffects;
 
 		void MainConfig()
 		{
@@ -120,6 +125,7 @@ namespace OperaThemeMaker
 					strcpy_s(picturePath, fileDialog.GetSelected().string().c_str());
 				else
 					strcpy_s(videoPath, fileDialog.GetSelected().string().c_str());
+				fileDialog.ClearSelected();
 			}
 
 			ImGui::ColorEdit3("Text Color", reinterpret_cast<float*>(&fgColor));
@@ -133,6 +139,7 @@ namespace OperaThemeMaker
 			if (fileDialogTheme.HasSelected())
 			{
 				strcpy_s(operaThemePath, fileDialogTheme.GetSelected().string().c_str());
+				fileDialogTheme.ClearSelected();
 			}
 
 			ImGui::SameLine();
@@ -199,9 +206,10 @@ namespace OperaThemeMaker
 		void ReviewAndDeliver()
 		{
 			ImGui::Begin("Active Video Effects Priority List");
-			OperaThemeMaker::VideoEffects videoEffects;
-			videoEffects.resize(4);
 
+			// TODO: Better handling of videoEffects vector. Remove constant resizing and assignment per loop
+
+			videoEffects.resize(4);
 			videoEffects[g_FourIntCache.a - 1] = (chkBoxBlur == true) ? &boxBlur : nullptr;
 			videoEffects[g_FourIntCache.b - 1] = (chkVignette == true) ? &vignette : nullptr;
 			videoEffects[g_FourIntCache.c - 1] = (chkEdgeDetection == true) ? &edgeDetection : nullptr;
@@ -258,42 +266,21 @@ namespace OperaThemeMaker
 
 			if (ImGui::Button("Create Theme"))
 			{
-
-				// Check if all required configurations are filled
-				if (*authorName == 0 || *themeName == 0 || *picturePath == 0) 
-					throw std::exception("Some Required Are Fields Left Blank!");
-
-				// Verify Output Path Exists
-				if (!exists(outputPath)) create_directory(outputPath);
-
-				// Create persona
-				Persona persona;
-				persona.info = { std::string(themeName), std::string(authorName), static_cast<unsigned>(version) };
-
-				if (*videoPath != 0)
-					persona.startPage = { std::filesystem::path(std::string(videoPath)).replace_extension(".webm").string(), Util::U32ToHex(ImGui::ColorConvertFloat4ToU32(fgColor)),
-						Util::U32ToHex(ImGui::ColorConvertFloat4ToU32(bgColor)), std::string(picturePath) };
-				else 
-					persona.startPage = { std::string(picturePath), Util::U32ToHex(ImGui::ColorConvertFloat4ToU32(fgColor)),
-					Util::U32ToHex(ImGui::ColorConvertFloat4ToU32(bgColor)), ""};
-
-				Core::CreatePersonaIni(persona);
-
-				// Process Video (Optional)
-				std::filesystem::path processedVideoPath;
-				if (*videoPath != 0)
-				{
-					processedVideoPath = Core::ProcessVideo(std::filesystem::path(videoPath), videoEffects);
-				}
-
-				// Create Archive
-				if (*videoPath != 0)
-					Core::Archive(picturePath, "output/persona.ini", processedVideoPath, std::string(themeName) + ".zip",
-						(chkToThemes == true)? std::filesystem::path(std::string(operaThemePath)) : std::filesystem::current_path().append("output"));
-				else
-					Core::Archive(picturePath, "output/persona.ini", std::string(themeName) + ".zip",
-						(chkToThemes == true) ? std::filesystem::path(std::string(operaThemePath)) : std::filesystem::current_path().append("output"));
+				std::thread themeThread(CreateTheme);
+				processingTheme = true;
+				ImGui::OpenPopup("Creating Theme");
+				themeThread.detach();
 			}
+
+			ImGui::SetNextWindowSize(ImVec2(300, 150));
+			if (ImGui::BeginPopupModal("Creating Theme"))
+			{
+				ImGui::Text("Creating Theme...\n(May take up to 10 minutes)");
+				if (!processingTheme) 
+					ImGui::CloseCurrentPopup();
+				ImGui::EndPopup();
+			}
+
 			ImGui::End();
 		}
 
@@ -340,6 +327,52 @@ namespace OperaThemeMaker
 
 		ImGui::End();
 	}
+
+	void CreateTheme()
+	{
+		using namespace GUIComponents;
+		// Check if all required configurations are filled
+		if (*authorName == 0 || *themeName == 0 || *picturePath == 0)
+		{
+			processingTheme = false;
+			throw std::exception("Some Required Are Fields Left Blank!");
+		}
+
+		// Verify Output Path Exists
+		if (!exists(outputPath)) create_directory(outputPath);
+		// Create persona
+		Persona persona;
+		persona.info = { std::string(themeName), std::string(authorName), static_cast<unsigned>(version) };
+
+		if (*videoPath != 0)
+			persona.startPage = { std::filesystem::path(std::string(videoPath)).replace_extension(".webm").string(),
+			std::string("#") + Util::U32ToHex(ImGui::ColorConvertFloat4ToU32(fgColor)),
+				std::string("#") + Util::U32ToHex(ImGui::ColorConvertFloat4ToU32(bgColor)),
+			std::string(picturePath)};
+		else
+			persona.startPage = { std::string(picturePath), std::string("#") + Util::U32ToHex(ImGui::ColorConvertFloat4ToU32(fgColor)),
+			Util::U32ToHex(ImGui::ColorConvertFloat4ToU32(bgColor)), "" };
+
+		Core::CreatePersonaIni(persona);
+
+		// Process Video (Optional)
+		std::filesystem::path processedVideoPath;
+		if (*videoPath != 0)
+		{
+			processedVideoPath = Core::ProcessVideo(std::filesystem::path(videoPath), videoEffects);
+		}
+
+		// Create Archive
+		if (*videoPath != 0)
+			Core::Archive(picturePath, "output/persona.ini", processedVideoPath, std::string(themeName) + ".zip",
+				(chkToThemes == true) ? std::filesystem::path(std::string(operaThemePath)) : std::filesystem::current_path().append("output"));
+		else
+			Core::Archive(picturePath, "output/persona.ini", std::string(themeName) + ".zip",
+				(chkToThemes == true) ? std::filesystem::path(std::string(operaThemePath)) : std::filesystem::current_path().append("output"));
+
+		processingTheme = false;
+	}
+
 }
 
 int main()
