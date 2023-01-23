@@ -1,7 +1,6 @@
 #include "VideoEffects.h"
 
 #include <stdexcept>
-#include <memory>
 
 namespace OperaThemeMaker
 {

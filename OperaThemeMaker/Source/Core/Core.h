@@ -1,5 +1,7 @@
 #pragma once
 
+#define MAX_KILOBITS 400000
+
 #include <filesystem>
 
 #include "HawtLib/File/File.h"
@@ -8,8 +10,6 @@
 #include "ffmpeg.h"
 
 #include "VideoEffects.h"
-
-using namespace ffmpegcpp;
 
 namespace OperaThemeMaker
 {
@@ -98,6 +98,7 @@ namespace OperaThemeMaker
 		inline std::filesystem::path ProcessVideo(const std::filesystem::path& inVideo,
 		                                          const VideoEffects& videoEffects)
 		{
+			using namespace ffmpegcpp;
 			auto outVideo = inVideo;
 			outVideo.replace_extension(".webm");
 			std::filesystem::path outputFile = std::filesystem::current_path().append("output").append(outVideo.filename().string());
@@ -131,40 +132,48 @@ namespace OperaThemeMaker
 					filterString += finalVideoEffect[i]->GetCommand() + "[video];";
 				}
 			}
-
-			// Get input Video Duration
-			AVFormatContext* pFormatCtx = avformat_alloc_context();
-			avformat_open_input(&pFormatCtx, inVideo.string().c_str(), NULL, NULL);
-			std::string bitRate = std::to_string(360000 / (pFormatCtx->duration / AV_TIME_BASE)) + "K";
-			avformat_close_input(&pFormatCtx);
-			avformat_free_context(pFormatCtx);
-
-			Muxer* muxer = new Muxer(outputFile.string().c_str());
-			VideoCodec* codec = new VideoCodec(AV_CODEC_ID_VP9);
-			codec->SetQualityScale(0);
-			codec->SetGenericOption("b", bitRate.c_str());
-			VideoEncoder* encoder = new VideoEncoder(codec, muxer);
-
-
-			Filter* filter = nullptr;
-			if (!filterString.empty())
-				filter = new Filter(filterString.c_str(), encoder);
-
-			Demuxer* demuxer = new Demuxer(inVideo.string().c_str());
-
-			if (!filterString.empty())
-				demuxer->DecodeBestVideoStream(filter);
-			else
-				demuxer->DecodeBestVideoStream(encoder);
-
-			demuxer->PreparePipeline();
-
-			while (!demuxer->IsDone())
+			// Check if video processing is needed
+			if ((inVideo.extension() != ".webm") || (inVideo.extension() == ".webm" && !filterString.empty()))
 			{
-				demuxer->Step();
-			}
+				// Get input Video Duration
+				AVFormatContext* pFormatCtx = avformat_alloc_context();
+				avformat_open_input(&pFormatCtx, inVideo.string().c_str(), NULL, NULL);
+				avformat_find_stream_info(pFormatCtx, NULL);
+				long long fileSize = (pFormatCtx->bit_rate / 1000) * (pFormatCtx->duration / AV_TIME_BASE);
+				if (fileSize > MAX_KILOBITS)
+					fileSize = MAX_KILOBITS;
+				const std::string bitRate = std::to_string(fileSize / (pFormatCtx->duration / AV_TIME_BASE)) + "K";
+				avformat_close_input(&pFormatCtx);
+				avformat_free_context(pFormatCtx);
 
-			muxer->Close();
+				Muxer* muxer = new Muxer(outputFile.string().c_str());
+				VideoCodec* codec = new VideoCodec(AV_CODEC_ID_VP9);
+				codec->SetQualityScale(0);
+				codec->SetGenericOption("b", bitRate.c_str());
+				VideoEncoder* encoder = new VideoEncoder(codec, muxer);
+
+				Filter* filter = nullptr;
+				if (!filterString.empty())
+					filter = new Filter(filterString.c_str(), encoder);
+
+				Demuxer* demuxer = new Demuxer(inVideo.string().c_str());
+
+				if (!filterString.empty())
+					demuxer->DecodeBestVideoStream(filter);
+				else
+					demuxer->DecodeBestVideoStream(encoder);
+
+				demuxer->PreparePipeline();
+
+				while (!demuxer->IsDone())
+				{
+					demuxer->Step();
+				}
+
+				muxer->Close();
+				return outputFile;
+			}
+			copy_file(inVideo, outputFile, std::filesystem::copy_options::overwrite_existing);
 			return outputFile;
 		}
 
