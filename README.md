@@ -9,7 +9,7 @@ Create Themes for Opera and Opera GX.
 
 **Artist ArtStation:** https://www.artstation.com/keysixzero
 
-# Description
+## **Description**
 
 OperaThemeMaker automates the creation of archive files to be consumed by various iterations of Opera Browsers to customize still and animated themes. Basic video editing capabilities are also included to add better personalization namely:
 
